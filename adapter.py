@@ -636,9 +636,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_DELETE(self):
         self.route('DELETE')
 
-DASHBOARD = '''<!doctype html><meta charset="utf-8"><title>Token Monitor 热点同步</title>
+DASHBOARD = '''<!doctype html><meta charset="utf-8"><title>Token Monitor 缓存同步</title>
 <style>body{font:16px system-ui;background:#f3f6fa;color:#172c43;max-width:850px;margin:40px auto;padding:24px}h1{font-size:26px}button{padding:12px;border:0;border-radius:8px;background:#245c9a;color:white}pre{background:white;padding:20px;white-space:pre-wrap;border-radius:12px}</style>
-<h1>Token Monitor 热点同步</h1><p>远端每 10 分钟压缩下载；本机界面连接不代表远端刚同步成功。</p>
+<h1>Token Monitor 缓存同步</h1><p>远端按配置周期压缩下载；本机界面连接不代表远端刚同步成功。</p>
 <button onclick="refreshRemote()">立即同步远端（60 秒内合并重复请求）</button><p id="summary"></p><pre id="detail"></pre>
 <script>async function show(){let s=await(await fetch('/adapter/status')).json();let t=s.last_success_at?new Date(s.last_success_at*1000).toLocaleString():'尚未成功同步';document.querySelector('#summary').textContent='状态：'+s.state+' ｜最后成功：'+t+' ｜缓存年龄：'+s.cache_age_seconds+' 秒 ｜待上报：'+s.pending_upload;document.querySelector('#detail').textContent=JSON.stringify(s,null,2)}async function refreshRemote(){await fetch('/adapter/refresh',{method:'POST',headers:{'X-Adapter-Action':'refresh'}});show()}show();setInterval(show,5000)</script>'''
 

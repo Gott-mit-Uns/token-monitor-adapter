@@ -1,10 +1,14 @@
-# Token Monitor Adapter for Windows
+# Token Monitor Adapter for Windows / macOS
 
 保持 Token Monitor 原界面和多设备用量查看，使用本机缓存减少热点下载。此工具不是 Token Monitor 采集器，需同时运行原客户端。
 
-Windows Adapter 的独立仓库为 `Gott-mit-Uns/token-monitor-adapter`。NAS Docker Agent 位于 [token-monitor-nas](https://github.com/Gott-mit-Uns/token-monitor-nas)，两者分别维护和发布。历史 `adapter-v0.1.0` 至 `adapter-v0.1.7` 已迁入本仓库；迁移保留原 EXE 与校验值。后续版本规则见 [VERSIONING.md](VERSIONING.md)。
+Windows/macOS Adapter 的独立仓库为 `Gott-mit-Uns/token-monitor-adapter`。NAS Docker Agent 位于 [token-monitor-nas](https://github.com/Gott-mit-Uns/token-monitor-nas)，两者分别维护和发布。历史 `adapter-v0.1.0` 至 `adapter-v0.1.7` 已迁入本仓库；迁移保留原 EXE 与校验值。后续版本规则见 [VERSIONING.md](VERSIONING.md)。
 
-## 使用
+## macOS
+
+macOS 提供用户级后台缓存服务，默认压缩下载和上传均为 5 分钟。无需第三方 Python 依赖；安装、状态页、恢复连接与卸载见 [macOS 文档](README.macos.md)。Windows 默认周期保持不变。
+
+## Windows 使用
 
 从本仓库的 [Releases](https://github.com/Gott-mit-Uns/token-monitor-adapter/releases) 下载 `TokenMonitorAdapter.exe` 和 `SHA256SUMS.txt`。支持 Windows 10/11 x64，需要 Microsoft Edge WebView2 Runtime 及系统 .NET Framework 4.7.2 以上，不需要 Python。首次运行打开设置，填写 HTTPS Hub 地址与同步密钥。密钥留空可加密复用当前用户 Token Monitor 的已有密钥，保存后不回显。
 

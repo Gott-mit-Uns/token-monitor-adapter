@@ -1,3 +1,7 @@
+import sys
+import unittest
+if sys.platform != "win32":
+    raise unittest.SkipTest("Windows platform integration tests run in Windows CI")
 import json
 import os
 from pathlib import Path

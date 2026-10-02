@@ -1,3 +1,4 @@
+import sys
 import copy
 import json
 import os
@@ -119,6 +120,7 @@ class PersistenceTests(unittest.TestCase):
         self.assertTrue(self.a.status()['scheduler']['stalled'])
         self.assertEqual(self.a.status()['health_level'],'warning')
         self.a.active_requests.clear();self.assertFalse(self.a.status()['scheduler']['stalled'])
+    @unittest.skipUnless(sys.platform == "win32", "Windows process supervisor")
     def test_parent_recovers_when_status_interface_is_unavailable(self):
         from desktop import Host
         from unittest.mock import Mock
@@ -127,6 +129,7 @@ class PersistenceTests(unittest.TestCase):
             host.check_worker_health(10,None);host.check_worker_health(130,None);stop.assert_not_called()
             host.check_worker_health(131,None);stop.assert_called_once();self.assertEqual(host.stopping_at,131)
             host.check_worker_health(200,None);stop.assert_called_once()
+    @unittest.skipUnless(sys.platform == "win32", "Windows process supervisor")
     def test_parent_healthy_probe_resets_failure_window(self):
         from desktop import Host
         from unittest.mock import Mock
