@@ -1,5 +1,6 @@
 import copy
 import json
+import os
 from pathlib import Path
 import socket
 import tempfile
@@ -57,7 +58,8 @@ class MacTests(unittest.TestCase):
         self.assertTrue(mac.restore_client(self.state))
         restored = json.loads((self.client / 'settings.json').read_text())
         self.assertEqual(restored, {**self.settings, 'theme': 'light'})
-        self.assertEqual((self.client / 'settings.json').stat().st_mode & 0o777, 0o600)
+        if os.name == 'posix':
+            self.assertEqual((self.client / 'settings.json').stat().st_mode & 0o777, 0o600)
 
     def test_restore_refuses_to_overwrite_user_connection_change(self):
         mac.attach_client(self.client, self.state)
