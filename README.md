@@ -2,9 +2,11 @@
 
 保持 Token Monitor 原界面和多设备用量查看，使用本机缓存减少热点下载。此工具不是 Token Monitor 采集器，需同时运行原客户端。
 
+Windows Adapter 的独立仓库为 `Gott-mit-Uns/token-monitor-adapter`。NAS Docker Agent 位于 [token-monitor-nas](https://github.com/Gott-mit-Uns/token-monitor-nas)，两者分别维护和发布。历史 `adapter-v0.1.0` 至 `adapter-v0.1.7` 已迁入本仓库；迁移保留原 EXE 与校验值。后续版本规则见 [VERSIONING.md](VERSIONING.md)。
+
 ## 使用
 
-从本仓库 `adapter-v*` Release 下载 `TokenMonitorAdapter.exe` 和 `SHA256SUMS.txt`。支持 Windows 10/11 x64，需要 Microsoft Edge WebView2 Runtime 及系统 .NET Framework 4.7.2 以上，不需要 Python。首次运行打开设置，填写 HTTPS Hub 地址与同步密钥。密钥留空可加密复用当前用户 Token Monitor 的已有密钥，保存后不回显。
+从本仓库的 [Releases](https://github.com/Gott-mit-Uns/token-monitor-adapter/releases) 下载 `TokenMonitorAdapter.exe` 和 `SHA256SUMS.txt`。支持 Windows 10/11 x64，需要 Microsoft Edge WebView2 Runtime 及系统 .NET Framework 4.7.2 以上，不需要 Python。首次运行打开设置，填写 HTTPS Hub 地址与同步密钥。密钥留空可加密复用当前用户 Token Monitor 的已有密钥，保存后不回显。
 
 默认压缩下载 10 分钟、远端上报 30 分钟。两个周期均由 Adapter 控制，支持 1/5/10/15/30 分钟。客户端实时向本机提交最新快照，持久化后确认接收；本地确认不表示远端已收到。勾选“接入 Token Monitor”会先备份配置，再将原客户端 Hub 地址设为本机地址并设为实时本地提交；需要重启原客户端使设置生效。取消勾选时不调整原客户端；Adapter 仍按自身周期发送已收到的新快照，客户端提交较慢时不能保证每周期都有新数据。
 

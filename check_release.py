@@ -2,6 +2,8 @@
 from pathlib import Path
 import re
 import sys
+import os
+import ast
 
 ALLOWED={'adapter.py','desktop.py','settings.py','tray_host.py','local_ipc.py','dashboard.html',
          'test_adapter.py','test_settings.py','test_runtime.py','test_ipc.py','requirements-build.txt','TokenMonitorAdapter.spec',
@@ -15,6 +17,11 @@ def check(root):
         if PATTERN.search(p.read_bytes()): findings.append(name+': credential-like content')
     assets=list((root/'assets').glob('*'))
     if sorted(p.name for p in assets)!=['icon-amber.ico','icon-green.ico','icon-red.ico']: findings.append('Unexpected asset files')
+    ref=os.environ.get('GITHUB_REF_NAME','')
+    if ref.startswith('adapter-v'):
+        tree=ast.parse((root/'desktop.py').read_text())
+        versions=[ast.literal_eval(n.value) for n in tree.body if isinstance(n,ast.Assign) and any(isinstance(t,ast.Name) and t.id=='VERSION' for t in n.targets)]
+        if len(versions)!=1 or ref!='adapter-v'+versions[0]: findings.append('Release tag does not match desktop.py VERSION')
     for line in findings: print(line)
     return bool(findings)
 if __name__=='__main__':sys.exit(check(Path(__file__).parent))
