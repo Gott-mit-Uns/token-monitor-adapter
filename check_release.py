@@ -20,10 +20,10 @@ def check(root):
     if sorted(p.name for p in assets)!=['icon-amber.ico','icon-green.ico','icon-red.ico']: findings.append('Unexpected asset files')
     ref=os.environ.get('GITHUB_REF_NAME','')
     if ref.startswith('adapter-v'):
-        tree=ast.parse((root/'desktop.py').read_text())
+        tree=ast.parse((root/'desktop.py').read_text(encoding='utf-8'))
         versions=[ast.literal_eval(n.value) for n in tree.body if isinstance(n,ast.Assign) and any(isinstance(t,ast.Name) and t.id=='VERSION' for t in n.targets)]
         if len(versions)!=1 or ref!='adapter-v'+versions[0]: findings.append('Release tag does not match desktop.py VERSION')
-        mac_tree=ast.parse((root/'macos_service.py').read_text())
+        mac_tree=ast.parse((root/'macos_service.py').read_text(encoding='utf-8'))
         mac_versions=[ast.literal_eval(n.value) for n in mac_tree.body if isinstance(n,ast.Assign) and any(isinstance(t,ast.Name) and t.id=='VERSION' for t in n.targets)]
         if mac_versions != versions: findings.append('macOS and Windows versions differ')
     for line in findings: print(line)
