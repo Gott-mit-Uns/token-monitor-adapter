@@ -15,8 +15,9 @@ import time
 import urllib.request
 from adapter import Adapter,Server,Handler,atomic_json,StorageError
 import settings
+from desktop_settings import SettingsController
 
-VERSION='0.1.9'
+VERSION='0.1.10'
 K=C.WinDLL('kernel32',use_last_error=True)
 K.CreateEventW.argtypes=[W.LPVOID,W.BOOL,W.BOOL,W.LPCWSTR]; K.CreateEventW.restype=W.HANDLE
 K.CreateMutexW.argtypes=[W.LPVOID,W.BOOL,W.LPCWSTR]; K.CreateMutexW.restype=W.HANDLE
@@ -170,39 +171,19 @@ class Host:
 
 
 class Bridge:
-    def __init__(self,host): self._host=host
+    def __init__(self,host):
+        self._host=host
+        self.controller=SettingsController(host, settings, VERSION, sys.executable,
+                                           bool(getattr(sys,'frozen',False)),
+                                           lambda:K.SetEvent(host.worker_stop), status)
     def get_settings(self):
-        c=settings.load(self._host.root)
-        return {k:c[k] for k in ('upstream','interval_seconds','upload_interval_ms','theme')}|{'key_saved':(self._host.root/'remote-secret.bin').exists(),'autostart':settings.startup_enabled(),'version':VERSION}
+        return self.controller.get_settings()
     def exit_app(self):
         threading.Thread(target=self._host.quit,daemon=True).start()
         return {'ok':True}
     def save_settings(self,value):
-        h=self._host
-        try:
-            # Drain in-flight work before checking pending or changing credentials.
-            with h.lock:
-                K.SetEvent(h.worker_stop)
-                if h.child: h.child.wait(timeout=18)
-                h.restart_at=0
-                cfg=settings.save(h.root,value,value.get('secret',''),confirm_migration=value.get('confirm_migration') is True)
-                if value.get('autostart') and not getattr(sys,'frozen',False): raise ValueError('开机启动请使用 EXE 版本。')
-                settings.autostart(bool(value.get('autostart')),sys.executable)
-                note=settings.connect_client(h.root,cfg) if value.get('connect_client') else '设置已保存，后台已使用当前地址。'
-                h.spawn()
-                deadline=time.monotonic()+10
-                while time.monotonic()<deadline:
-                    try:
-                        if status(h.root).get('upstream')==cfg['upstream']: break
-                    except Exception: pass
-                    if h.child.poll() is not None: raise RuntimeError('worker_start_failed')
-                    time.sleep(.2)
-                else: raise RuntimeError('worker_configuration_not_confirmed')
-            return {'ok':True,'message':note,'settings':self.get_settings()}
-        except Exception as e:
-            with h.lock:
-                if h.child is None or h.child.poll() is not None: h.spawn()
-            return {'ok':False,'requires_migration':isinstance(e,settings.PendingMigrationRequired),'message':str(e) if isinstance(e,ValueError) else '设置操作未完成，未确认后台已加载新地址；请重新打开设置核对保存值及诊断状态。'}
+        return self.controller.save_settings(value)
+
 
 def self_test(root):
     cfg={'upstream':'https://example.invalid','device_id':'Synthetic Desktop','port':0,'interval_seconds':600}
