@@ -8,6 +8,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 import settings
+VERIFY_REMOTE=settings.verify_remote
 from adapter import atomic_json
 
 class SettingsTests(unittest.TestCase):
@@ -25,6 +26,7 @@ class SettingsTests(unittest.TestCase):
                 desktop.K.CloseHandle(first)
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.root=Path(self.temp.name)
+        self.remote_check=patch('settings.verify_remote');self.remote_check.start();self.addCleanup(self.remote_check.stop)
         self.value={'upstream':'https://example.invalid','interval_seconds':600,'upload_interval_ms':1800000,'theme':'dark'}
     def tearDown(self): self.temp.cleanup()
     def test_dpapi_roundtrip_and_no_plaintext(self):
@@ -47,6 +49,45 @@ class SettingsTests(unittest.TestCase):
         atomic_json(self.root/'pending.json',{'deviceId':'Synthetic Desktop'})
         with self.assertRaises(ValueError): settings.save(self.root,{**self.value,'upstream':'https://other.invalid'},'new-synthetic-key')
         self.assertEqual((self.root/'remote-secret.bin').read_bytes(),old)
+    def test_confirmed_migration_preserves_pending_and_resets_old_retry(self):
+        settings.save(self.root,self.value,'old-synthetic-key')
+        pending={'deviceId':'Synthetic Desktop','allTime':{'totalTokens':123}}
+        atomic_json(self.root/'pending.json',pending)
+        atomic_json(self.root/'metrics.json',{'upload_schedule':{'next_at':1234,'retry_at':999,'failures':4},'last_upload_error':{'status':404},'daily':{'synthetic':1}})
+        cfg=settings.save(self.root,{**self.value,'upstream':'https://other.invalid'},'new-synthetic-key',confirm_migration=True)
+        self.assertEqual(cfg['upstream'],'https://other.invalid')
+        self.assertEqual(settings.remote_secret(self.root,cfg),'new-synthetic-key')
+        self.assertEqual(json.loads((self.root/'pending.json').read_text()),pending)
+        metrics=json.loads((self.root/'metrics.json').read_text())
+        self.assertEqual(metrics['upload_schedule'],{'next_at':1234,'retry_at':0,'failures':0})
+        self.assertEqual(metrics['daily'],{'synthetic':1})
+        self.assertTrue(list((self.root/'backups').glob('hub-switch-*/pending.json')))
+    def test_rejected_new_hub_does_not_change_config_key_or_pending(self):
+        settings.save(self.root,self.value,'old-synthetic-key')
+        atomic_json(self.root/'pending.json',{'deviceId':'Synthetic Desktop'})
+        before={p.name:p.read_bytes() for p in self.root.iterdir() if p.is_file()}
+        with patch('settings.verify_remote',side_effect=ValueError('新 Hub 认证失败')):
+            with self.assertRaises(ValueError): settings.save(self.root,{**self.value,'upstream':'https://other.invalid'},'new-synthetic-key',confirm_migration=True)
+        for name,data in before.items():self.assertEqual((self.root/name).read_bytes(),data)
+    def test_config_write_failure_restores_key_and_metrics(self):
+        settings.save(self.root,self.value,'old-synthetic-key')
+        atomic_json(self.root/'metrics.json',{'upload_schedule':{'retry_at':99,'failures':2}})
+        before={n:(self.root/n).read_bytes() for n in ('config.json','remote-secret.bin','metrics.json')}
+        original=settings.atomic_json
+        def fail(path,value):
+            if Path(path).name=='config.json':raise OSError('synthetic disk failure')
+            return original(path,value)
+        with patch('settings.atomic_json',side_effect=fail):
+            with self.assertRaises(OSError):settings.save(self.root,{**self.value,'upstream':'https://other.invalid'},'new-synthetic-key')
+        for n,data in before.items():self.assertEqual((self.root/n).read_bytes(),data)
+    def test_remote_validation_rejects_http_and_invalid_schema(self):
+        from unittest.mock import MagicMock
+        for code,body in [(401,b'private server error'),(404,b'Not found'),(200,b'{"role":"other"}')]:
+            conn=MagicMock();response=MagicMock();response.status=code;response.read.return_value=body;response.getheader.return_value=None;conn.getresponse.return_value=response
+            with patch('settings.http.client.HTTPSConnection',return_value=conn):
+                with self.assertRaises(ValueError) as caught:VERIFY_REMOTE('https://example.invalid','synthetic-secret')
+                self.assertNotIn('private server error',str(caught.exception));self.assertNotIn('synthetic-secret',str(caught.exception))
+            conn.close.assert_called_once()
     def test_reject_credentials_in_address_and_bad_periods(self):
         for url in ['http://example.invalid','https://u:p@example.invalid','https://example.invalid?key=synthetic']:
             with self.assertRaises(ValueError): settings.validate({**self.value,'upstream':url})

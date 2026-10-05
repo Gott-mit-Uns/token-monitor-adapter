@@ -257,7 +257,7 @@ class Adapter:
                     'storage': {'ok': not self.storage_failures, 'message': '本地保存失败' if self.storage_failures else None},
                     'scheduler': {**copy.deepcopy(self.scheduler_health), 'stalled': stalled, 'request_max_age_seconds': round(request_age,1), 'heartbeat_age_seconds': round(time.monotonic() - self.heartbeat_monotonic, 1)},
                     'upload_progress_started_at': self.metrics['upload_schedule'].get('last_attempt_at', self.metrics['upload_schedule']['next_at'] - self.upload_interval),
-                    'version': self.version, 'upload_retry_at': self.upload_retry_at,
+                    'version': self.version, 'upstream': self.config['upstream'], 'upload_retry_at': self.upload_retry_at,
                     'upload_phase': ('uploading' if self.upload_in_progress else ('retry' if self.upload_retry_at else 'queued') if self.pending is not None
                                      else 'idle' if self.metrics.get('last_upload_at') else 'waiting'),
                     'upload_interval_seconds': self.upload_interval, 'next_upload_at': self.metrics['upload_schedule']['next_at'],

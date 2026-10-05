@@ -88,7 +88,7 @@ def call(address,parent,method,value=None):
                 if not K.GetNamedPipeServerProcessId(connection.fileno(),C.byref(pid)) or pid.value!=parent:
                     raise RuntimeError('settings_peer_rejected')
                 connection.send_bytes(json.dumps({'method':method,'value':value or {}},ensure_ascii=False).encode('utf-8'))
-                if not connection.poll(40): raise RuntimeError('settings_timeout')
+                if not connection.poll(90): raise RuntimeError('settings_timeout')
                 return json.loads(connection.recv_bytes(65536))
         except (OSError,EOFError):
             if attempt==19: raise RuntimeError('settings_unavailable') from None

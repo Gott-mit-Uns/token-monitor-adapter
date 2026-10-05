@@ -3,6 +3,8 @@ import base64
 import ctypes as C
 from ctypes import wintypes as W
 import json
+import http.client
+import gzip
 import os
 from pathlib import Path
 import shutil
@@ -68,22 +70,69 @@ def validate(value):
     if theme not in ('system','light','dark'): raise ValueError('主题无效。')
     return {'upstream':value['upstream'].strip().rstrip('/'),'interval_seconds':download,'upload_interval_ms':upload,'theme':theme}
 
-def save(root,value,key=''):
+class PendingMigrationRequired(ValueError):
+    pass
+
+def verify_remote(url,key):
+    """Validate the destination without transmitting pending snapshots or echoing errors."""
+    u=urlsplit(url);conn=http.client.HTTPSConnection(u.hostname,u.port or 443,timeout=12)
+    try:
+        for path in ('/api/health','/api/stats'):
+            conn.request('GET',u.path.rstrip('/')+path,headers={'Authorization':'Bearer '+key,'Accept-Encoding':'gzip'})
+            response=conn.getresponse();raw=response.read(16*1024*1024+1)
+            if response.status in (401,403): raise ValueError('新 Hub 认证失败，地址和密钥均未保存。')
+            if response.status!=200: raise ValueError(f'新 Hub 返回 HTTP {response.status}，地址和密钥均未保存。')
+            if len(raw)>16*1024*1024: raise ValueError('新 Hub 响应过大，设置未保存。')
+            body=gzip.decompress(raw) if response.getheader('Content-Encoding')=='gzip' else raw
+            if len(body)>64*1024*1024: raise ValueError('新 Hub 响应过大，设置未保存。')
+            data=json.loads(body)
+            valid=isinstance(data,dict) and (data.get('role')=='hub' if path=='/api/health' else isinstance(data.get('devices'),list) and isinstance(data.get('periods'),dict))
+            if not valid: raise ValueError('新地址未提供兼容的 Hub 接口，设置未保存。')
+    except ValueError as e:
+        if str(e).startswith(('新 Hub','新地址')): raise
+        raise ValueError('新 Hub 响应无效，设置未保存。') from None
+    except Exception:
+        raise ValueError('无法连接新 Hub，设置未保存。请检查地址与网络。') from None
+    finally: conn.close()
+
+def save(root,value,key='',confirm_migration=False):
     root=Path(root); root.mkdir(parents=True,exist_ok=True); old=load(root); new={**old,**validate(value)}
     for name, legacy in [('interval_seconds', 3600), ('upload_interval_ms', 3600000)]:
         if new[name] == legacy and old.get(name) != legacy:
             raise ValueError('60 分钟仅用于保留原配置，请选择新的同步周期。')
-    if new['upstream']!=old['upstream']:
+    changed=new['upstream']!=old['upstream']
+    if changed:
         try: pending=json.loads((root/'pending.json').read_text(encoding='utf-8'))
         except FileNotFoundError: pending=None
-        if pending: raise ValueError('仍有待上报数据，请完成旧服务器上报后再切换地址。')
-    if key:
-        if not isinstance(key,str) or len(key)>8192: raise ValueError('密钥长度无效。')
-        temp=root/'remote-secret.bin.tmp'; temp.write_bytes(protect(key.encode())); os.replace(temp,root/'remote-secret.bin')
-    elif not (root/'remote-secret.bin').exists():
-        # Encrypt the existing client's key locally; never add it to config.json.
-        (root/'remote-secret.bin').write_bytes(protect(local_secret(old).encode()))
-    atomic_json(root/'config.json',new)
+        if pending and not confirm_migration:
+            raise PendingMigrationRequired('地址尚未保存：有待上报数据。是否保留这些数据并迁移到新 Hub？确认后会验证新 Hub 并备份；后续快照将发送到新 Hub。')
+    if key and (not isinstance(key,str) or len(key)>8192): raise ValueError('密钥长度无效。')
+    effective=key or remote_secret(root,old)
+    if changed: verify_remote(new['upstream'],effective)
+    names=('config.json','remote-secret.bin','metrics.json')
+    previous={n:(root/n).read_bytes() if (root/n).exists() else None for n in names}
+    if changed:
+        import uuid
+        backup=root/'backups'/('hub-switch-'+time.strftime('%Y%m%d-%H%M%S')+'-'+uuid.uuid4().hex[:8])
+        backup.mkdir(parents=True)
+        for n in (*names,'pending.json','cache.json'):
+            if (root/n).exists(): shutil.copy2(root/n,backup/n)
+    try:
+        if key or not (root/'remote-secret.bin').exists():
+            temp=root/'remote-secret.bin.tmp';temp.write_bytes(protect(effective.encode()));os.replace(temp,root/'remote-secret.bin')
+        if changed and (root/'metrics.json').exists():
+            metrics=json.loads((root/'metrics.json').read_text(encoding='utf-8'))
+            schedule=metrics.get('upload_schedule')
+            if isinstance(schedule,dict): schedule.update(retry_at=0,failures=0)
+            metrics['last_upload_error']=None;metrics['last_manual_at']=0
+            atomic_json(root/'metrics.json',metrics)
+        atomic_json(root/'config.json',new)
+    except Exception:
+        for n,data in previous.items():
+            if data is None: (root/n).unlink(missing_ok=True)
+            else:
+                temp=root/(n+'.restore');temp.write_bytes(data);os.replace(temp,root/n)
+        raise
     return new
 
 def connect_client(root,config):
