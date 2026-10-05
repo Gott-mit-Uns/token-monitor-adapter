@@ -5,7 +5,7 @@ import sys
 import os
 import ast
 
-ALLOWED={'hub_protocol.py','test_hub_protocol.py','adapter.py','desktop.py','settings.py','tray_host.py','local_ipc.py','dashboard.html',
+ALLOWED={'state_store.py','test_state_store.py','hub_protocol.py','test_hub_protocol.py','adapter.py','desktop.py','settings.py','tray_host.py','local_ipc.py','dashboard.html',
          'macos_service.py','test_macos.py','README.macos.md','scripts/install-macos.sh','scripts/uninstall-macos.sh',
          'test_adapter.py','test_settings.py','test_runtime.py','test_ipc.py','requirements-build.txt','TokenMonitorAdapter.spec',
          '.gitignore','config.example.json','README.md','RELEASE.md','check_release.py'}

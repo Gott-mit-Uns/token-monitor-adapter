@@ -16,32 +16,23 @@ from urllib.parse import urlsplit, unquote
 from hub_protocol import MAX_BODY, ResponseError, decode_json, valid_response
 READ_PATHS = {'/api/stats', '/api/history', '/api/devices', '/api/subscriptions', '/api/health'}
 
-def encode(value):
-    return json.dumps(value, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
-
-def atomic_json(path, value):
-    path = Path(path)
-    temporary = path.with_suffix(path.suffix + '.tmp')
-    temporary.write_bytes(encode(value))
-    os.replace(temporary, path)
+from state_store import JsonStateStore, StorageError, atomic_json, encode
 
 class UpstreamError(Exception):
     def __init__(self, status, body=None):
         self.status = status
         self.body = body or {'error': 'upstream_unavailable'}
 
-class StorageError(Exception):
-    pass
-
 class Adapter:
-    def __init__(self, config, root, transport=None, secret_provider=None, local_secret_provider=None, version='development'):
+    def __init__(self, config, root, transport=None, secret_provider=None, local_secret_provider=None, version='development', store=None):
         self.config, self.root = config, Path(root)
         self.version = version
         self.upload_in_progress = False
         self.active_requests = {}
         self.cache_dirty = False
         self.pending_dirty = False
-        self.storage_failures = set()
+        self.store = store if store is not None else JsonStateStore(root, writer=lambda path, value: atomic_json(path, value))
+        self.storage_failures = self.store.failures
         self.scheduler_health = {'stage': 'starting', 'heartbeat_at': time.time(), 'consecutive_errors': 0,
                                  'error_category': None, 'message': None, 'restarts': 0}
         self.heartbeat_monotonic = time.monotonic()
@@ -93,27 +84,20 @@ class Adapter:
         return time.monotonic() >= current[1]
 
     def _load(self):
-        try:
-            metrics = json.loads((self.root / 'metrics.json').read_text(encoding='utf-8'))
-            if isinstance(metrics.get('upstream'), dict) and isinstance(metrics.get('local'), dict):
-                self.metrics.update(metrics)
-                self.metrics['session_started_at'] = time.time()
-        except (OSError, ValueError, TypeError):
-            pass
-        try:
-            document = json.loads((self.root / 'cache.json').read_text(encoding='utf-8'))
-            if document.get('upstream') == self.config['upstream']:
-                for path, item in document.get('entries', {}).items():
+        metrics = self.store.read('metrics.json')
+        if metrics and isinstance(metrics.get('upstream'), dict) and isinstance(metrics.get('local'), dict):
+            self.metrics.update(metrics)
+            self.metrics['session_started_at'] = time.time()
+        document = self.store.read('cache.json')
+        if document and document.get('upstream') == self.config['upstream']:
+            entries = document.get('entries', {})
+            if isinstance(entries, dict):
+                for path, item in entries.items():
                     if path in READ_PATHS and isinstance(item, dict) and self.valid(path, item.get('data')) and isinstance(item.get('at'), (int, float)):
                         self.cache[path] = item
-        except (OSError, ValueError, TypeError):
-            pass
-        try:
-            pending = json.loads((self.root / 'pending.json').read_text(encoding='utf-8'))
-            if pending and str(pending.get('deviceId', pending.get('id', ''))) == self.config['device_id']:
-                self.pending = pending
-        except (OSError, ValueError, TypeError):
-            pass
+        pending = self.store.read('pending.json')
+        if pending and str(pending.get('deviceId', pending.get('id', ''))) == self.config['device_id']:
+            self.pending = pending
 
     def read_secret(self):
         document = json.loads(Path(self.config['credentials_file']).read_text(encoding='utf-8'))
@@ -201,12 +185,7 @@ class Adapter:
     valid = staticmethod(valid_response)
 
     def _persist(self, name, value):
-        try:
-            atomic_json(self.root / name, value)
-        except OSError:
-            self.storage_failures.add(name)
-            raise StorageError('local_save_failed') from None
-        self.storage_failures.discard(name)
+        self.store.write(name, value)
 
     def save_cache(self):
         with self.lock:

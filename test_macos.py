@@ -128,6 +128,7 @@ class MacTests(unittest.TestCase):
                 mac.install(target, self.client, self.root / 'launch.plist')
         source = Path(mac.__file__).parent
         self.assertEqual((target / 'service' / 'hub_protocol.py').read_bytes(), (source / 'hub_protocol.py').read_bytes())
+        self.assertEqual((target / 'service' / 'state_store.py').read_bytes(), (source / 'state_store.py').read_bytes())
 
 
 if __name__ == '__main__':
