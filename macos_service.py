@@ -148,7 +148,7 @@ def install(root, client_root, plist_path, upstream=None):
     service = root / 'service'
     service.mkdir(mode=0o700, exist_ok=True)
     source = Path(__file__).resolve().parent
-    for name in ('adapter.py', 'macos_service.py'):
+    for name in ('adapter.py', 'hub_protocol.py', 'macos_service.py'):
         if (source / name).resolve() != (service / name).resolve():
             shutil.copy2(source / name, service / name)
     runtime = root / 'runtime'

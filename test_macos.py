@@ -121,6 +121,14 @@ class MacTests(unittest.TestCase):
             quit_client.assert_not_called()
             self.assertFalse((self.root / 'not-created').exists())
 
+    def test_install_copies_core_protocol_dependency(self):
+        target = self.root / 'dependency-check'
+        with patch.object(mac.sys, 'platform', 'darwin'), patch.object(mac, 'check_port'), patch.object(mac.venv.EnvBuilder, 'create', side_effect=RuntimeError('stop after source copy')):
+            with self.assertRaisesRegex(RuntimeError, 'stop after source copy'):
+                mac.install(target, self.client, self.root / 'launch.plist')
+        source = Path(mac.__file__).parent
+        self.assertEqual((target / 'service' / 'hub_protocol.py').read_bytes(), (source / 'hub_protocol.py').read_bytes())
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -4,7 +4,7 @@ import ctypes as C
 from ctypes import wintypes as W
 import json
 import http.client
-import gzip
+from hub_protocol import decode_json, valid_response
 import os
 from pathlib import Path
 import shutil
@@ -83,10 +83,8 @@ def verify_remote(url,key):
             if response.status in (401,403): raise ValueError('新 Hub 认证失败，地址和密钥均未保存。')
             if response.status!=200: raise ValueError(f'新 Hub 返回 HTTP {response.status}，地址和密钥均未保存。')
             if len(raw)>16*1024*1024: raise ValueError('新 Hub 响应过大，设置未保存。')
-            body=gzip.decompress(raw) if response.getheader('Content-Encoding')=='gzip' else raw
-            if len(body)>64*1024*1024: raise ValueError('新 Hub 响应过大，设置未保存。')
-            data=json.loads(body)
-            valid=isinstance(data,dict) and (data.get('role')=='hub' if path=='/api/health' else isinstance(data.get('devices'),list) and isinstance(data.get('periods'),dict))
+            data=decode_json(raw,response.getheader('Content-Encoding'))
+            valid=valid_response(path,data)
             if not valid: raise ValueError('新地址未提供兼容的 Hub 接口，设置未保存。')
     except ValueError as e:
         if str(e).startswith(('新 Hub','新地址')): raise

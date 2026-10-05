@@ -2,7 +2,6 @@
 import argparse
 import collections
 import copy
-import gzip
 import hmac
 import http.client
 import json
@@ -14,7 +13,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit, unquote
 
-MAX_BODY = 16 * 1024 * 1024
+from hub_protocol import MAX_BODY, ResponseError, decode_json, valid_response
 READ_PATHS = {'/api/stats', '/api/history', '/api/devices', '/api/subscriptions', '/api/health'}
 
 def encode(value):
@@ -171,16 +170,19 @@ class Adapter:
                 meter['gzip_responses'] += int(response.getheader('Content-Encoding') == 'gzip')
             if len(raw) > MAX_BODY:
                 raise UpstreamError(502, {'error': 'response_too_large'})
-            decoded = gzip.decompress(raw) if response.getheader('Content-Encoding') == 'gzip' else raw
-            if len(decoded) > 64 * 1024 * 1024:
-                raise UpstreamError(502, {'error': 'decoded_response_too_large'})
-            parsed = json.loads(decoded) if decoded else {}
             if not 200 <= response.status < 300:
-                # Do not echo arbitrary upstream errors (which could contain secrets).
+                # Preserve HTTP status even when a proxy returns HTML/plain text.
                 error = {'error': 'upstream_rejected'}
                 if response.status == 409 and path == '/api/subscriptions':
-                    error = parsed
+                    try:
+                        error = decode_json(raw, response.getheader('Content-Encoding'))
+                    except ResponseError:
+                        pass
                 raise UpstreamError(response.status, error)
+            try:
+                parsed = decode_json(raw, response.getheader('Content-Encoding'))
+            except ResponseError as error:
+                raise UpstreamError(502, {'error': str(error)}) from None
             return parsed
         except UpstreamError:
             with self.lock:
@@ -195,17 +197,8 @@ class Adapter:
             connection.close()
             with self.lock:self.active_requests.pop(request_id,None)
 
-    @staticmethod
-    def valid(path, data):
-        if not isinstance(data, dict):
-            return False
-        if path == '/api/stats':
-            return isinstance(data.get('devices'), list) and isinstance(data.get('periods'), dict)
-        if path == '/api/devices':
-            return isinstance(data.get('devices'), list)
-        if path == '/api/health':
-            return data.get('role') == 'hub'
-        return True
+    # Compatibility alias for existing integrations and tests.
+    valid = staticmethod(valid_response)
 
     def _persist(self, name, value):
         try:

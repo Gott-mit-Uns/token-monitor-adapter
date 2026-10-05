@@ -7,7 +7,7 @@ import tempfile
 import threading
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, Mock
 from adapter import Adapter, Handler, Server, UpstreamError, encode
 
 STATS = {'devices': [{'deviceId': 'Synthetic Desktop'}, {'deviceId': 'Mac'}, {'deviceId': 'NAS1'}, {'deviceId': 'NAS2'}], 'periods': {'today': {'totalTokens': 42}}}
@@ -21,6 +21,37 @@ class Tests(unittest.TestCase):
         self.a = Adapter(self.config, self.temp.name, transport=self.remote, secret_provider=lambda: 'synthetic-test-secret')
     def tearDown(self):
         self.temp.cleanup()
+    def test_http_error_text_preserves_status_and_accounting(self):
+        for status in (401, 403, 404, 503):
+            response = Mock(status=status)
+            response.read.return_value = b'private proxy error'
+            response.getheader.return_value = None
+            connection = Mock()
+            connection.getresponse.return_value = response
+            with patch('adapter.http.client.HTTPSConnection', return_value=connection):
+                with self.assertRaises(UpstreamError) as raised:
+                    self.a.http_request('GET', '/api/stats')
+            self.assertEqual(raised.exception.status, status)
+            self.assertEqual(raised.exception.body, {'error': 'upstream_rejected'})
+            connection.close.assert_called_once()
+            self.assertFalse(self.a.active_requests)
+        meter = self.a.metrics['upstream']['GET /api/stats']
+        self.assertEqual(meter['requests'], 4)
+        self.assertEqual(meter['failures'], 4)
+        self.assertEqual(meter['download_body_bytes'], 4 * len(b'private proxy error'))
+
+    def test_invalid_success_response_is_protocol_error(self):
+        response = Mock(status=200)
+        response.read.return_value = b'not JSON'
+        response.getheader.return_value = None
+        connection = Mock()
+        connection.getresponse.return_value = response
+        with patch('adapter.http.client.HTTPSConnection', return_value=connection):
+            with self.assertRaises(UpstreamError) as raised:
+                self.a.http_request('GET', '/api/stats')
+        self.assertEqual(raised.exception.body, {'error': 'invalid_upstream_response'})
+        self.assertEqual(self.a.metrics['upstream']['GET /api/stats']['failures'], 1)
+        connection.close.assert_called_once()
     def remote(self, method, path, body=None):
         self.calls.append((method, path, copy.deepcopy(body)))
         if self.down:

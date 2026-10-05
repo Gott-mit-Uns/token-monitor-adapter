@@ -51,7 +51,7 @@ jobs:
       - name: Package source service allowlist
         run: |
           mkdir -p dist
-          tar -czf dist/TokenMonitorAdapter-macOS.tar.gz adapter.py macos_service.py scripts/install-macos.sh scripts/uninstall-macos.sh README.macos.md LICENSE
+          tar -czf dist/TokenMonitorAdapter-macOS.tar.gz hub_protocol.py adapter.py macos_service.py scripts/install-macos.sh scripts/uninstall-macos.sh README.macos.md LICENSE
           shasum -a 256 dist/TokenMonitorAdapter-macOS.tar.gz | sed 's@dist/@@' > dist/SHA256SUMS-macOS.txt
       - uses: actions/upload-artifact@v4
         with:
