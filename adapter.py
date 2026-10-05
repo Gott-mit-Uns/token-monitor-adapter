@@ -17,6 +17,7 @@ from hub_protocol import MAX_BODY, ResponseError, decode_json, valid_response
 READ_PATHS = {'/api/stats', '/api/history', '/api/devices', '/api/subscriptions', '/api/health'}
 
 from state_store import JsonStateStore, StorageError, atomic_json, encode
+from sync_schedule import Deadlines, restore_upload_schedule, upload_decision, network_backoff, scheduler_backoff
 
 class UpstreamError(Exception):
     def __init__(self, status, body=None):
@@ -61,12 +62,11 @@ class Adapter:
         self._load()
         self.upload_interval = config.get('upload_interval_ms', 1800000) / 1000
         schedule = self.metrics.setdefault('upload_schedule', {'started_at': time.time()})
-        if schedule.get('interval') != self.upload_interval or 'next_at' not in schedule:
-            schedule['next_at'] = schedule.get('last_attempt_at', schedule['started_at']) + self.upload_interval
-        schedule['interval'] = self.upload_interval
+        schedule.update(restore_upload_schedule(schedule, self.upload_interval))
         self.upload_retry_at = schedule.get('retry_at', 0)
         self.upload_failures = schedule.get('failures', 0)
-        self.deadlines = {}
+        self.schedule_deadlines = Deadlines()
+        self.deadlines = self.schedule_deadlines.targets
         self.deadline_due('upload', schedule['next_at'])
         if self.upload_retry_at: self.deadline_due('upload-retry', self.upload_retry_at)
         for path,item in self.cache.items():
@@ -76,12 +76,7 @@ class Adapter:
         except StorageError: pass
 
     def deadline_due(self, key, target):
-        # Persist wall dates; use monotonic deadlines during this process lifetime.
-        current = self.deadlines.get(key)
-        if current is None or current[0] != target:
-            current = (target, time.monotonic() + max(0, target - time.time()))
-            self.deadlines[key] = current
-        return time.monotonic() >= current[1]
+        return self.schedule_deadlines.due(key, target)
 
     def _load(self):
         metrics = self.store.read('metrics.json')
@@ -300,7 +295,7 @@ class Adapter:
                 with self.lock:
                     failures = self.failures.get(path, 0) + 1
                     self.failures[path] = failures
-                    self.next_retry[path] = time.time() + min(600, 60 * 2 ** min(failures - 1, 4))
+                    self.next_retry[path] = time.time() + network_backoff(failures)
                     if path == '/api/stats':
                         self.last_error = error.body.get('error', 'upstream_unavailable')
                     self.save()
@@ -356,9 +351,9 @@ class Adapter:
             with self.lock:
                 now = time.time()
                 schedule = self.metrics['upload_schedule']
-                if self.pending is None: return 'no_data'
-                if self.upload_retry_at and not self.deadline_due('upload-retry',self.upload_retry_at): return 'backoff'
-                if not manual and not self.upload_retry_at and not self.deadline_due('upload',schedule['next_at']): return 'waiting'
+                decision = upload_decision(self.pending is not None, manual, self.upload_retry_at,
+                                           schedule['next_at'], self.deadline_due)
+                if decision != 'ready': return decision
                 payload = copy.deepcopy(self.pending)
                 generation = self.pending_generation
                 if self.storage_failures or self.pending_dirty or self.cache_dirty: self.save()
@@ -388,7 +383,7 @@ class Adapter:
                     safe_errors = {'invalid_ingest_ack', 'upstream_connection_failed', 'credential_unavailable', 'upstream_unavailable'}
                     reason = error.body.get('error')
                     self.metrics['last_upload_error'] = {'status': error.status, 'error': reason if reason in safe_errors else 'upstream_rejected'}
-                    self.upload_retry_at = time.time() + min(600, 60 * 2 ** min(self.upload_failures - 1, 4))
+                    self.upload_retry_at = time.time() + network_backoff(self.upload_failures)
                 return 'failed'
             finally:
                 with self.lock:
@@ -453,7 +448,7 @@ class Adapter:
                     n = self.scheduler_health['consecutive_errors'] + 1 if self.scheduler_health['error_category'] == category else 1
                     self.scheduler_health.update(consecutive_errors=n, error_category=category,
                         message={'storage':'本地保存失败', 'network':'远端请求失败，等待重试', 'internal':'调度内部异常，正在恢复'}[category])
-                if category == 'internal': delay = min(60, 5 * 2 ** min(n - 1, 4))
+                delay = scheduler_backoff(category, n)
             self.heartbeat('waiting')
             self.stop.wait(delay)
         self.heartbeat('stopped')

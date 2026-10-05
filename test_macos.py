@@ -129,6 +129,7 @@ class MacTests(unittest.TestCase):
         source = Path(mac.__file__).parent
         self.assertEqual((target / 'service' / 'hub_protocol.py').read_bytes(), (source / 'hub_protocol.py').read_bytes())
         self.assertEqual((target / 'service' / 'state_store.py').read_bytes(), (source / 'state_store.py').read_bytes())
+        self.assertEqual((target / 'service' / 'sync_schedule.py').read_bytes(), (source / 'sync_schedule.py').read_bytes())
 
 
 if __name__ == '__main__':
