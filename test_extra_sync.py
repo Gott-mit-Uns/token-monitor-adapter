@@ -53,6 +53,15 @@ class ExtraSyncTests(unittest.TestCase):
         restored = Adapter(self.cfg, self.temp.name, transport=self.remote)
         self.assertEqual(restored.write_extra(path, {'enabled': True}), first)
         self.assertEqual(len(self.calls), 1)
+    def test_external_conflict_refreshes_local_review_base(self):
+        path = '/api/sync/settings/modelAliases'
+        self.a.refresh(path)
+        self.doc = {'version': 1, 'revision': 2, 'updatedAt': 'synthetic', 'value': {'modelAliases': {}, 'modelAliasGrouping': 'off'}}
+        with self.assertRaises(UpstreamError):
+            self.a.write_extra(path, {'baseRevision': 0, 'value': {}})
+        count = len(self.calls)
+        self.assertEqual(self.a.refresh(path)['revision'], 2)
+        self.assertEqual(len(self.calls), count)
     def test_title_revocation_scrubs_pending_and_new_snapshots(self):
         payload = {'deviceId': self.cfg['device_id'], 'sessionTitleSyncGeneration': 1,
                    'periods': {'today': {'sessions': {'s': {'title': 'synthetic title', 'firstUserMessage': 'synthetic text', 'totalTokens': 12}}}}}

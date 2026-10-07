@@ -344,10 +344,16 @@ class Adapter:
                         self.remove_pending_titles()
                     self.save()
                 return data
-            except UpstreamError:
+            except UpstreamError as error:
                 if title:
                     with self.lock:
                         self.metrics['title_policy_attempt'] = {'upstream': self.config['upstream'], 'device_id': self.config['device_id'], 'enabled': payload['enabled'], 'retry_at': time.time() + self.interval}
+                elif error.status == 409 and self.valid(path, error.body):
+                    # A conflict is authoritative data, not a successful write.
+                    # Prime GET so review/retry cannot keep reading an older base.
+                    with self.lock:
+                        self.cache[path] = {'at': time.time(), 'data': {key: copy.deepcopy(error.body[key]) for key in ('version', 'revision', 'updatedAt', 'value')}}
+                        self.cache_dirty = True
                 raise
             finally:
                 # Failed PUTs are never queued or turned into success acknowledgements.
