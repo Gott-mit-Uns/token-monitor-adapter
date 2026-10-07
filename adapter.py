@@ -11,10 +11,10 @@ import socket
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlsplit, unquote
+from urllib.parse import urlsplit, unquote, quote
 
-from hub_protocol import MAX_BODY, ResponseError, decode_json, valid_response
-READ_PATHS = {'/api/stats', '/api/history', '/api/devices', '/api/subscriptions', '/api/health'}
+from hub_protocol import MAX_BODY, ResponseError, decode_json, valid_response, SYNC_READS, SYNC_SETTINGS, sync_conflict
+READ_PATHS = {'/api/stats', '/api/history', '/api/devices', '/api/subscriptions', '/api/health'} | SYNC_READS
 
 from state_store import JsonStateStore, StorageError, atomic_json, encode
 from sync_schedule import Deadlines, restore_upload_schedule, upload_decision, network_backoff, scheduler_backoff
@@ -45,6 +45,7 @@ class Adapter:
         self.secret_provider = secret_provider or self.read_secret
         self.local_secret_provider = local_secret_provider or self.secret_provider
         self.lock = threading.RLock()
+        self.title_policy_path = '/api/sync/titles/' + quote(str(config['device_id']), safe='')
         self.read_locks = {p: threading.Lock() for p in READ_PATHS}
         self.upload_lock = threading.Lock()
         self.cache = {}
@@ -88,7 +89,7 @@ class Adapter:
             entries = document.get('entries', {})
             if isinstance(entries, dict):
                 for path, item in entries.items():
-                    if path in READ_PATHS and isinstance(item, dict) and self.valid(path, item.get('data')) and isinstance(item.get('at'), (int, float)):
+                    if (path in READ_PATHS or path == self.title_policy_path) and isinstance(item, dict) and self.valid(path, item.get('data')) and isinstance(item.get('at'), (int, float)):
                         self.cache[path] = item
         pending = self.store.read('pending.json')
         if pending and str(pending.get('deviceId', pending.get('id', ''))) == self.config['device_id']:
@@ -120,7 +121,7 @@ class Adapter:
         base = urlsplit(self.config['upstream'])
         if base.scheme != 'https' or base.username or base.password or base.query or base.fragment:
             raise UpstreamError(503, {'error': 'invalid_upstream'})
-        if path not in READ_PATHS and not (method == 'POST' and path == '/api/ingest') and not (method == 'PUT' and path == '/api/subscriptions') and not (method == 'DELETE' and path.startswith('/api/devices/')):
+        if path not in READ_PATHS and not (method == 'POST' and path == '/api/ingest') and not (method == 'PUT' and (path == '/api/subscriptions' or path in SYNC_SETTINGS or path == self.title_policy_path)) and not (method == 'DELETE' and path.startswith('/api/devices/')):
             raise UpstreamError(405, {'error': 'unsupported_upstream_route'})
         headers = {'Authorization': 'Bearer ' + self.secret_provider(), 'Accept-Encoding': 'gzip'}
         data = encode(body) if body is not None else None
@@ -152,9 +153,10 @@ class Adapter:
             if not 200 <= response.status < 300:
                 # Preserve HTTP status even when a proxy returns HTML/plain text.
                 error = {'error': 'upstream_rejected'}
-                if response.status == 409 and path == '/api/subscriptions':
+                if response.status == 409 and (path == '/api/subscriptions' or path in SYNC_SETTINGS):
                     try:
                         error = decode_json(raw, response.getheader('Content-Encoding'))
+                        if path in SYNC_SETTINGS: error = sync_conflict(error)
                     except ResponseError:
                         pass
                 raise UpstreamError(response.status, error)
@@ -224,6 +226,7 @@ class Adapter:
                     'storage': {'ok': not self.storage_failures, 'message': '本地保存失败' if self.storage_failures else None},
                     'scheduler': {**copy.deepcopy(self.scheduler_health), 'stalled': stalled, 'request_max_age_seconds': round(request_age,1), 'heartbeat_age_seconds': round(time.monotonic() - self.heartbeat_monotonic, 1)},
                     'upload_progress_started_at': self.metrics['upload_schedule'].get('last_attempt_at', self.metrics['upload_schedule']['next_at'] - self.upload_interval),
+                    'extra_sync': {'remote_sse': False, 'read_interval_seconds': self.interval, 'cached_endpoints': sorted(p for p in self.cache if p in SYNC_READS)},
                     'version': self.version, 'upstream': self.config['upstream'], 'upload_retry_at': self.upload_retry_at,
                     'upload_phase': ('uploading' if self.upload_in_progress else ('retry' if self.upload_retry_at else 'queued') if self.pending is not None
                                      else 'idle' if self.metrics.get('last_upload_at') else 'waiting'),
@@ -295,13 +298,77 @@ class Adapter:
                 with self.lock:
                     failures = self.failures.get(path, 0) + 1
                     self.failures[path] = failures
-                    self.next_retry[path] = time.time() + network_backoff(failures)
+                    self.next_retry[path] = time.time() + (max(self.interval, network_backoff(failures)) if path in SYNC_READS else network_backoff(failures))
                     if path == '/api/stats':
                         self.last_error = error.body.get('error', 'upstream_unavailable')
                     self.save()
-                    if item:
+                    if path in SYNC_READS and error.status in (401, 403, 404, 405):
+                        self.cache.pop(path, None); self.cache_dirty = True; self.save()
+                    elif item:
                         return copy.deepcopy(item['data'])
                 raise
+
+    def write_extra(self, path, payload):
+        title = path.startswith('/api/sync/titles/')
+        if title and unquote(path[len('/api/sync/titles/'):]) != self.config['device_id']:
+            raise UpstreamError(403, {'error': 'other_device_title_policy_disabled'})
+        if title:
+            path = self.title_policy_path
+            if not isinstance(payload, dict) or set(payload) != {'enabled'} or type(payload['enabled']) is not bool:
+                raise UpstreamError(400, {'error': 'invalid_title_policy'})
+        elif path in SYNC_SETTINGS:
+            if not isinstance(payload, dict) or set(payload) != {'baseRevision', 'value'} or type(payload['baseRevision']) is not int or not 0 <= payload['baseRevision'] <= 9007199254740991:
+                raise UpstreamError(400, {'error': 'invalid_shared_settings'})
+        else:
+            raise UpstreamError(405, {'error': 'unsupported_route'})
+        guard = self.upload_lock if title else self.read_locks[path]
+        with guard:
+            if title:
+                with self.lock:
+                    attempt = self.metrics.get('title_policy_attempt', {})
+                    if attempt.get('upstream') == self.config['upstream'] and attempt.get('device_id') == self.config['device_id'] and attempt.get('enabled') == payload['enabled'] and attempt.get('retry_at') and not self.deadline_due('title-policy-retry', attempt['retry_at']):
+                        raise UpstreamError(503, {'error': 'waiting_for_upstream'})
+                    item = self.cache.get(path)
+                    if item and item['data']['enabled'] == payload['enabled'] and not self.deadline_due('title-policy', item['at'] + self.interval):
+                        if self.storage_failures or self.cache_dirty or self.pending_dirty: self.save()
+                        return copy.deepcopy(item['data'])
+            try:
+                data = self.request_remote('PUT', path, payload)
+                if not self.valid(path, data) or data.get('ok') is not True or (title and data['enabled'] != payload['enabled']):
+                    raise UpstreamError(502, {'error': 'invalid_sync_ack'})
+                with self.lock:
+                    self.cache[path] = {'at': time.time(), 'data': data}
+                    self.cache_dirty = True
+                    if title: self.metrics.pop('title_policy_attempt', None)
+                    if title and not data['enabled'] and self.pending is not None:
+                        self.remove_pending_titles()
+                    self.save()
+                return data
+            except UpstreamError:
+                if title:
+                    with self.lock:
+                        self.metrics['title_policy_attempt'] = {'upstream': self.config['upstream'], 'device_id': self.config['device_id'], 'enabled': payload['enabled'], 'retry_at': time.time() + self.interval}
+                raise
+            finally:
+                # Failed PUTs are never queued or turned into success acknowledgements.
+                self.save()
+
+    def remove_pending_titles(self):
+        if not isinstance(self.pending, dict): return
+        self.pending = copy.deepcopy(self.pending)
+        self.pending.pop('sessionTitleSyncGeneration', None)
+        text_keys = ('title', 'sessionTitle', 'session_title', 'name', 'preview', 'firstUserMessage', 'first_user_message', 'customTitle', 'custom_title', 'aiTitle', 'ai_title')
+        for source in (self.pending, self.pending.get('periods', {})):
+            if not isinstance(source, dict): continue
+            for period in source.values():
+                if not isinstance(period, dict): continue
+                sessions = period.get('sessions', {})
+                if not isinstance(sessions, dict): continue
+                for session in sessions.values():
+                    if isinstance(session, dict):
+                        for key in text_keys: session.pop(key, None)
+        self.pending_generation += 1
+        self.pending_dirty = True
 
     def broadcast(self, stats):
         message = b'event: stats\ndata: ' + encode({'type': 'stats', 'reason': 'cached_remote_refresh', 'stats': stats, 'at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}) + b'\n\n'
@@ -338,6 +405,8 @@ class Adapter:
         with self.lock:
             self.pending_generation += 1
             self.pending = copy.deepcopy(payload)
+            policy = self.cache.get(self.title_policy_path)
+            if policy and not policy['data']['enabled']: self.remove_pending_titles()
             self.pending_dirty = True
             self.metrics['local_accepted_uploads'] += 1
             try: self.save()
@@ -411,6 +480,10 @@ class Adapter:
         upload = self.upload_pending(manual=True)
         try:
             self.refresh(manual=True)
+            for path in SYNC_READS:
+                if path in self.cache:
+                    try: self.refresh(path, manual=True)
+                    except UpstreamError: pass
             download = 'failed' if self.failures.get('/api/stats') else 'success_or_cached'
         except UpstreamError:
             download = 'failed'
@@ -431,6 +504,10 @@ class Adapter:
         if self.stop.is_set(): return
         self.heartbeat('download')
         self.refresh()
+        for path in SYNC_READS:
+            if path in self.cache and not self.stop.is_set():
+                try: self.refresh(path)
+                except UpstreamError: pass
         self.heartbeat('idle')
         network = result == 'failed' or bool(self.failures.get('/api/stats'))
         with self.lock:
@@ -533,6 +610,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(200, adapter.refresh(path))
             if method == 'POST' and path == '/api/ingest':
                 return self.reply(200, adapter.ingest(self.read_body()))
+            if method == 'PUT' and (path in SYNC_SETTINGS or path.startswith('/api/sync/titles/')):
+                return self.reply(200, adapter.write_extra(path, self.read_body()))
             if method == 'PUT' and path == '/api/subscriptions':
                 payload = self.read_body()
                 if not isinstance(payload, dict) or not isinstance(payload.get('subscriptions'), list) or not isinstance(payload.get('baseUpdatedAt', ''), str):

@@ -112,11 +112,13 @@ class Tests(unittest.TestCase):
         self.assertEqual(restored.pending_token_summary()['value'], 10)
 
     def test_v067_additional_sync_probe_stays_local(self):
+        previous = self.a.transport
+        self.a.transport = lambda method, path, body=None: {'ok': True, 'version': 1, 'sharedSettings': True, 'sessionTitles': {'enabled': False}} if path == '/api/sync/content' else previous(method, path, body)
         self.a.refresh()
         self.start_http()
         calls = len(self.calls)
         for _ in range(5):
-            self.assertEqual(self.request('/api/sync/content')[0], 405)
+            self.assertEqual(self.request('/api/sync/content')[0], 200)
             self.assertEqual(self.request('/api/stats')[0], 200)
             self.assertEqual(self.request('/adapter/status', auth=False)[0], 200)
         self.assertEqual(len(self.calls), calls)

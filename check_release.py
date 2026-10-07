@@ -7,7 +7,7 @@ import ast
 
 ALLOWED={'desktop_settings.py','test_desktop_settings.py','sync_schedule.py','test_sync_schedule.py','state_store.py','test_state_store.py','hub_protocol.py','test_hub_protocol.py','adapter.py','desktop.py','settings.py','tray_host.py','local_ipc.py','dashboard.html',
          'macos_service.py','test_macos.py','README.macos.md','scripts/install-macos.sh','scripts/uninstall-macos.sh',
-         'test_adapter.py','test_settings.py','test_runtime.py','test_ipc.py','requirements-build.txt','TokenMonitorAdapter.spec',
+         'test_extra_sync.py','test_adapter.py','test_settings.py','test_runtime.py','test_ipc.py','requirements-build.txt','TokenMonitorAdapter.spec',
          '.gitignore','config.example.json','README.md','RELEASE.md','check_release.py'}
 PATTERN=re.compile(rb'github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|sk-[A-Za-z0-9_-]{20,}|-----BEGIN [A-Z ]{0,16}PRIVATE KEY-----')
 def check(root):
