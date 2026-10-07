@@ -79,6 +79,48 @@ class Tests(unittest.TestCase):
         c.request(method, path, encode(body) if body is not None else None, h)
         r = c.getresponse(); value = json.loads(r.read()); status = r.status; c.close()
         return status, value
+    def test_v067_payload_queues_without_early_remote_upload(self):
+        # Representative v0.67 buildSyncPayload shape: no allTime.sessions;
+        # session text is removed upstream when additional sync is disabled.
+        payload = {'deviceId': 'Synthetic Desktop', 'trackedClients': ['claude-code'],
+                   'allTime': {'totalTokens': 1000},
+                   'today': {'totalTokens': 100, 'sessions': {'sample': {'totalTokens': 100}}}}
+        for n in range(20):
+            payload['allTime']['totalTokens'] = 1000 + n
+            self.a.ingest(payload)
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.a.upload_pending(), 'waiting')
+        self.a.metrics['upload_schedule']['next_at'] = time.time() - 1
+        self.assertEqual(self.a.upload_pending(), 'success')
+        self.assertEqual(len(self.calls), 1)
+        self.assertEqual(self.calls[0][2]['allTime']['totalTokens'], 1019)
+        self.assertIsNone(self.a.pending)
+
+    def test_v067_counter_correction_establishes_new_baseline(self):
+        payload = {'deviceId': 'Synthetic Desktop', 'trackedClients': ['claude-code'],
+                   'periods': {'allTime': {'totalTokens': 1000}}}
+        self.a.ingest(payload); self.a.upload_pending(manual=True)
+        payload['periods']['allTime']['totalTokens'] = 900
+        self.a.ingest(payload)
+        self.assertEqual(self.a.pending_token_summary()['reason'], 'counter_decreased')
+        self.assertIsNone(self.a.pending_token_summary()['value'])
+        self.assertEqual(self.a.upload_pending(manual=True), 'success')
+        payload['periods']['allTime']['totalTokens'] = 910
+        self.a.ingest(payload)
+        restored = Adapter(self.config, self.temp.name, transport=self.remote,
+                           secret_provider=lambda: 'synthetic-test-secret')
+        self.assertEqual(restored.pending_token_summary()['value'], 10)
+
+    def test_v067_additional_sync_probe_stays_local(self):
+        self.a.refresh()
+        self.start_http()
+        calls = len(self.calls)
+        for _ in range(5):
+            self.assertEqual(self.request('/api/sync/content')[0], 405)
+            self.assertEqual(self.request('/api/stats')[0], 200)
+            self.assertEqual(self.request('/adapter/status', auth=False)[0], 200)
+        self.assertEqual(len(self.calls), calls)
+
     def test_many_refreshes_one_download(self):
         for _ in range(30): self.assertEqual(self.a.refresh(), STATS)
         self.assertEqual(len(self.calls), 1)
