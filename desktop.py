@@ -17,7 +17,7 @@ from adapter import Adapter,Server,Handler,atomic_json,StorageError
 import settings
 from desktop_settings import SettingsController, overview_window_bounds
 
-VERSION='0.1.19'
+VERSION='0.1.20'
 K=C.WinDLL('kernel32',use_last_error=True)
 K.CreateEventW.argtypes=[W.LPVOID,W.BOOL,W.BOOL,W.LPCWSTR]; K.CreateEventW.restype=W.HANDLE
 K.CreateMutexW.argtypes=[W.LPVOID,W.BOOL,W.LPCWSTR]; K.CreateMutexW.restype=W.HANDLE
@@ -228,6 +228,37 @@ def ui_main(root,pipe,parent):
         native.Location=Point(x,y)
     window.events.before_show+=fit_overview
     stop=event(root,'ui-stop',True);show=event(root,'ui-show');force=threading.Event();closed=threading.Event()
+    fitted=threading.Event()
+    def fit_loaded_overview():
+        if fitted.is_set(): return
+        fitted.set()
+        # Only fit the first populated overview. Later polling and manual resizing
+        # must not move or resize a window the user is already working in.
+        deadline=time.monotonic()+8
+        while not closed.is_set() and time.monotonic()<deadline:
+            try:
+                layout=window.evaluate_js("""(() => {
+                    const main=document.querySelector('main'),footer=document.getElementById('appVersion');
+                    const ready=footer?.textContent.includes('v'+%s);
+                    return {ready,height:main&&footer?Math.ceil(footer.getBoundingClientRect().bottom-main.getBoundingClientRect().top+parseFloat(getComputedStyle(main).paddingBottom)):0};
+                })()""" % json.dumps(VERSION))
+                if layout and layout.get('ready'):
+                    from System.Windows.Forms import Screen
+                    native=window.native
+                    area=Screen.FromControl(native).WorkingArea
+                    scale=(C.windll.user32.GetDpiForWindow(native.Handle.ToInt32()) or 96)/96.0
+                    frame=(native.Height-native.ClientSize.Height)/scale
+                    height=max(520,min(4096,float(layout['height'])+frame))
+                    x,y,width,height=overview_window_bounds((area.X,area.Y,area.Width,area.Height),scale,height)
+                    window.resize(round(width/scale),round(height/scale))
+                    window.move(round(x/scale),round(y/scale))
+                    return
+            except Exception:
+                # The bounded initial window remains usable if the page is
+                # unavailable or has already been closed.
+                return
+            closed.wait(.1)
+    window.events.loaded+=fit_loaded_overview
     close_requested=threading.Event()
     def closing():
         if force.is_set(): closed.set();return True

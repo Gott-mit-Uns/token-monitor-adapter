@@ -33,6 +33,10 @@ class WindowBoundsTests(unittest.TestCase):
                 self.assertGreaterEqual(x,area[0]);self.assertGreaterEqual(y,area[1])
                 self.assertLessEqual(x+w,area[0]+area[2]);self.assertLessEqual(y+h,area[1]+area[3])
 
+    def test_populated_overview_height_is_fitted_but_bounded(self):
+        self.assertEqual(overview_window_bounds((0,0,1920,1400),1,1160)[3],1160)
+        self.assertEqual(overview_window_bounds((0,0,1920,1040),1,1160)[3],1024)
+
 
 class ControllerTests(unittest.TestCase):
     def setUp(self):
