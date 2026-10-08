@@ -30,6 +30,16 @@ class ControllerTests(unittest.TestCase):
         self.controller = SettingsController(self.host, self.settings, 'test', 'synthetic.exe', True,
                                              self.stop, self.probe, Clock())
 
+    def test_legacy_settings_bridge_returns_default_style(self):
+        self.assertEqual(self.controller.get_settings()['ui_style'],'glass')
+
+    def test_settings_bridge_returns_selected_style_without_secret(self):
+        self.config['ui_style']='instrument'
+        self.config['secret']='synthetic-private-value'
+        result=self.controller.get_settings()
+        self.assertEqual(result['ui_style'],'instrument')
+        self.assertNotIn('secret',result)
+
     def test_success_drains_before_save_and_confirms_worker(self):
         operations = []
         self.stop.side_effect = lambda: operations.append('stop')

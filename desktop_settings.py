@@ -11,7 +11,7 @@ class SettingsController:
 
     def get_settings(self):
         config = self.settings.load(self.host.root)
-        return {key: config[key] for key in ('upstream', 'interval_seconds', 'upload_interval_ms', 'theme')} | {
+        return {key: config[key] for key in ('upstream', 'interval_seconds', 'upload_interval_ms', 'theme')} | {'ui_style': config.get('ui_style', 'glass'),
             'key_saved': (self.host.root / 'remote-secret.bin').exists(),
             'autostart': self.settings.startup_enabled(), 'version': self.version}
 

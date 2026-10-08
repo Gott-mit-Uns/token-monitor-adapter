@@ -39,7 +39,7 @@ def load(root):
     except (OSError,ValueError): pass
     return {'upstream':'','port':17322,'device_id':original.get('deviceId','Desktop'),
             'credentials_file':str(client_root()/'credentials.json'),'interval_seconds':600,
-            'upload_interval_ms':1800000,'theme':'system',**value}
+            'upload_interval_ms':1800000,'theme':'system','ui_style':'glass',**value}
 
 def local_secret(config):
     try:
@@ -68,7 +68,9 @@ def validate(value):
         raise ValueError('请选择提供的同步周期。')
     theme=value.get('theme','system')
     if theme not in ('system','light','dark'): raise ValueError('主题无效。')
-    return {'upstream':value['upstream'].strip().rstrip('/'),'interval_seconds':download,'upload_interval_ms':upload,'theme':theme}
+    style=value.get('ui_style','glass')
+    if style not in ('glass','clean','instrument'): raise ValueError('界面风格无效。')
+    return {'upstream':value['upstream'].strip().rstrip('/'),'interval_seconds':download,'upload_interval_ms':upload,'theme':theme,'ui_style':style}
 
 class PendingMigrationRequired(ValueError):
     pass
@@ -94,7 +96,8 @@ def verify_remote(url,key):
     finally: conn.close()
 
 def save(root,value,key='',confirm_migration=False):
-    root=Path(root); root.mkdir(parents=True,exist_ok=True); old=load(root); new={**old,**validate(value)}
+    root=Path(root); root.mkdir(parents=True,exist_ok=True); old=load(root)
+    new={**old,**validate({**value,'ui_style':value.get('ui_style',old.get('ui_style','glass'))})}
     for name, legacy in [('interval_seconds', 3600), ('upload_interval_ms', 3600000)]:
         if new[name] == legacy and old.get(name) != legacy:
             raise ValueError('60 分钟仅用于保留原配置，请选择新的同步周期。')

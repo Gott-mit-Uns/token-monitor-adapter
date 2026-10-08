@@ -16,6 +16,15 @@ if not NODE:
 
 
 class DashboardTests(unittest.TestCase):
+    def test_style_options_keep_existing_navigation_and_use_local_fonts(self):
+        for style in ('glass','clean','instrument'):
+            self.assertIn('value="'+style+'"',HTML)
+        self.assertIn("ui_style:$('uiStyle').value",HTML)
+        self.assertIn("applyStyle(c.ui_style||'glass')",HTML)
+        self.assertNotIn('@font-face',HTML)
+        self.assertNotIn('fonts.googleapis',HTML)
+        self.assertIn('font-variant-numeric:tabular-nums',HTML)
+        self.assertIn("localStorage.setItem('adapter-ui-style',style)",HTML)
     def calculate(self, expression):
         if not NODE:
             self.skipTest('Node.js is needed to validate dashboard calculations')

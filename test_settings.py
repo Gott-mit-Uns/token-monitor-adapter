@@ -29,6 +29,18 @@ class SettingsTests(unittest.TestCase):
         self.remote_check=patch('settings.verify_remote');self.remote_check.start();self.addCleanup(self.remote_check.stop)
         self.value={'upstream':'https://example.invalid','interval_seconds':600,'upload_interval_ms':1800000,'theme':'dark'}
     def tearDown(self): self.temp.cleanup()
+    def test_old_config_defaults_to_glass(self):
+        self.assertEqual(settings.load(self.root)['ui_style'],'glass')
+    def test_all_styles_persist_and_legacy_save_preserves_style(self):
+        for style in ('glass','clean','instrument'):
+            settings.save(self.root,{**self.value,'ui_style':style},'synthetic-secret')
+            self.assertEqual(settings.load(self.root)['ui_style'],style)
+        settings.save(self.root,self.value,'synthetic-secret')
+        self.assertEqual(settings.load(self.root)['ui_style'],'instrument')
+    def test_invalid_style_rejected_before_save(self):
+        with self.assertRaises(ValueError):
+            settings.save(self.root,{**self.value,'ui_style':'unknown'},'synthetic-secret')
+        self.assertFalse((self.root/'config.json').exists())
     def test_dpapi_roundtrip_and_no_plaintext(self):
         key=b'synthetic-secret-for-tests'; blob=settings.protect(key)
         self.assertNotIn(key,blob);self.assertEqual(settings.protect(blob,True),key)

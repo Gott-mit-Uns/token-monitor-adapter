@@ -17,7 +17,7 @@ from urllib.parse import urlsplit
 
 from adapter import Adapter, Handler, Server, StorageError, UpstreamError, atomic_json
 
-VERSION = '0.1.15'
+VERSION = '0.1.16'
 LABEL = 'io.github.gott-mit-uns.token-monitor-adapter'
 CLIENT_KEYS = ('hubMode', 'hubUrl', 'syncUploadIntervalMs')
 
