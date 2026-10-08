@@ -49,6 +49,61 @@ class DashboardTests(unittest.TestCase):
                                 env={**os.environ, 'TZ': 'Asia/Shanghai'})
         return json.loads(result.stdout)
 
+    def settings_script(self, script):
+        if not NODE:
+            self.skipTest('Node.js is needed to validate dashboard settings')
+        functions = '\n'.join(re.findall(
+            r'^function (?:applyTheme|period|fillSettings|setConnectionControlsEnabled)\(.*$',
+            HTML, re.MULTILINE))
+        harness = """
+const elements={};
+const $=id=>elements[id]||(elements[id]={options:[],value:'',checked:false,disabled:false,
+    appendChild(option){this.options.push(option)}});
+const document={documentElement:{dataset:{}},createElement:()=>({dataset:{}})};
+const localStorage={setItem(key,value){this[key]=value}};
+let systemDark=true,selectedTheme='system';
+const matchMedia=()=>({matches:systemDark});
+const window={adapterSettingsDirty:true};
+const fmt=n=>Number(n||0).toLocaleString('zh-CN');
+const text=()=>{},applyStyle=()=>{};
+"""
+        result = subprocess.run([NODE, '-e', harness + functions + '\n' + script],
+                                capture_output=True, text=True, encoding='utf-8', check=True)
+        return json.loads(result.stdout)
+
+    def test_restored_theme_matches_select_and_system_changes(self):
+        result = self.settings_script("""
+applyTheme('dark');const restored=$('theme').value;
+applyTheme('invalid');const fallback=selectedTheme;
+systemDark=false;applyTheme(selectedTheme);
+console.log(JSON.stringify([restored,fallback,$('theme').value,
+    document.documentElement.dataset.theme,localStorage['adapter-theme']]));
+""")
+        self.assertEqual(result, ['dark', 'system', 'system', 'light', 'system'])
+
+    def test_browser_connection_controls_require_ready_bridge(self):
+        result = self.settings_script("""
+setConnectionControlsEnabled(false);
+const ids=['server','secret','downloadPeriod','uploadPeriod','connectClient','autostart','saveSettings'];
+const disabled=ids.every(id=>$(id).disabled);
+const previewEnabled=!$('theme').disabled&&!$('uiStyle').disabled;
+setConnectionControlsEnabled(true);
+console.log(JSON.stringify([disabled,previewEnabled,ids.every(id=>!$(id).disabled)]));
+""")
+        self.assertEqual(result, [True, True, True])
+
+    def test_client_connection_is_initial_setup_action_and_legacy_period_is_accurate(self):
+        result = self.settings_script("""
+const config={upstream:'',interval_seconds:7200,upload_interval_ms:5400000};
+fillSettings(config);const initial=$('connectClient').checked;
+$('connectClient').checked=true;
+fillSettings({...config,upstream:'https://example.invalid'});
+console.log(JSON.stringify([initial,$('connectClient').checked,
+    $('downloadPeriod').options[0].textContent,$('uploadPeriod').options[0].textContent,
+    window.adapterSettingsDirty]));
+""")
+        self.assertEqual(result, [True, False, '120 分钟（原配置）', '90 分钟（原配置）', False])
+
     def test_recent_includes_today_and_29_previous_days(self):
         result = self.calculate("recordBounds('recent','','',new Date(2026,9,8,23,59))")
         self.assertEqual((result['start'], result['end']), ('2026-09-09', '2026-10-08'))
@@ -75,6 +130,20 @@ class DashboardTests(unittest.TestCase):
 
     def test_traffic_sum_uses_recorded_body_bytes(self):
         self.assertEqual(self.calculate('trafficTotals([{upload_body_bytes:20,download_body_bytes:30},{upload_body_bytes:5,download_body_bytes:7}])'), {'upload':25,'download':37})
+
+    def test_decimal_traffic_units_and_aligned_overview_totals(self):
+        if not NODE:
+            self.skipTest('Node.js is needed to validate dashboard calculations')
+        function = re.search(r'^function bytes\(.*$', HTML, re.MULTILINE).group()
+        result = subprocess.run([NODE, '-e', function + '\nconsole.log(JSON.stringify([999,1000,1000000,1000000000].map(bytes)));'],
+                                capture_output=True, text=True, encoding='utf-8', check=True)
+        self.assertEqual(json.loads(result.stdout), ['999 B', '1.00 KB', '1.00 MB', '1.00 GB'])
+        self.assertLess(HTML.index('<strong>今日流量'), HTML.index('<strong>累计流量'))
+        self.assertEqual(HTML.count('class="metrics today-metrics flow-metrics"'), 2)
+        self.assertIn('id="trafficTotal"', HTML)
+        self.assertNotIn('id="upbar"', HTML)
+        self.assertNotIn('id="downbar"', HTML)
+        self.assertIn('id="pendingModelRows"', HTML)
 
     def test_history_sum_and_missing_fields(self):
         result = self.calculate('historyTotals([{upload:{requests:3,successes:2,failures:1},download:{requests:4,successes:3,failures:1}},{upload:{requests:1}}])')

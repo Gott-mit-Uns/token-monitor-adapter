@@ -246,11 +246,17 @@ class Adapter:
         clients = payload.get('trackedClients')
         if type(total) is not int or total < 0 or not isinstance(clients, list) or not all(isinstance(c, str) for c in clients):
             return None
-        return {'deviceId': self.config['device_id'], 'upstream': self.config['upstream'],
-                'tracked_clients': sorted(set(clients)), 'total_tokens': total}
+        summary = {'deviceId': self.config['device_id'], 'upstream': self.config['upstream'],
+                   'tracked_clients': sorted(set(clients)), 'total_tokens': total}
+        models = period.get('models')
+        if (isinstance(models, dict) and all(isinstance(k, str) and k and type(v) is int and v >= 0
+                                            for k, v in models.items()) and sum(models.values()) == total):
+            summary['models'] = dict(models)
+        return summary
 
     def pending_token_summary(self):
-        def unavailable(reason): return {'value': None, 'calculable': False, 'reason': reason}
+        def unavailable(reason): return {'value': None, 'calculable': False, 'reason': reason,
+                                         'models': [], 'models_reason': reason}
         if self.pending is None: return unavailable('no_pending')
         current = self.token_summary(self.pending)
         if current is None: return unavailable('missing_fields')
@@ -262,7 +268,24 @@ class Adapter:
         if type(previous) is not int or previous < 0: return unavailable('no_baseline')
         delta = current['total_tokens'] - previous
         if delta < 0: return unavailable('counter_decreased')
-        return {'value': delta, 'calculable': True, 'reason': 'snapshot_difference'}
+        result = {'value': delta, 'calculable': True, 'reason': 'snapshot_difference',
+                  'models': [], 'models_reason': 'missing_model_baseline'}
+        if 'models' not in current:
+            result['models_reason'] = 'missing_model_fields'
+        elif isinstance(baseline.get('models'), dict):
+            old = baseline['models']
+            if (not all(isinstance(k, str) and k and type(v) is int and v >= 0 for k, v in old.items())
+                    or sum(old.values()) != previous):
+                return result
+            differences = {model: current['models'].get(model, 0) - old.get(model, 0)
+                           for model in current['models'].keys() | old.keys()}
+            if any(v < 0 for v in differences.values()):
+                result['models_reason'] = 'model_counter_decreased'
+            else:
+                result['models'] = [{'model': model, 'tokens': value} for model, value in
+                                    sorted(differences.items(), key=lambda item: (-item[1], item[0])) if value > 0]
+                result['models_reason'] = 'snapshot_difference'
+        return result
 
     def refresh(self, path='/api/stats', manual=False):
         if path not in READ_PATHS:

@@ -350,7 +350,7 @@ class Tests(unittest.TestCase):
         self.assertNotIn('token_baseline',self.a.status()['metrics'])
 
     def test_token_baseline_sent_generation_failure_and_restart(self):
-        def snapshot(total): return {'deviceId':'Synthetic Desktop','periods':{'allTime':{'totalTokens':total}},'trackedClients':['synthetic-client']}
+        def snapshot(total): return {'deviceId':'Synthetic Desktop','periods':{'allTime':{'totalTokens':total,'models':{'sol':total}}},'trackedClients':['synthetic-client']}
         entered,release=threading.Event(),threading.Event()
         def transport(*args):
             entered.set();self.assertTrue(release.wait(3));return {'ok':True}
@@ -359,16 +359,60 @@ class Tests(unittest.TestCase):
         thread=threading.Thread(target=lambda:self.a.upload_pending(manual=True));thread.start()
         self.assertTrue(entered.wait(3));self.a.ingest(snapshot(150));release.set();thread.join(3)
         self.assertEqual(self.a.status()['pending_tokens']['value'],50)
+        self.assertEqual(self.a.status()['pending_tokens']['models'], [{'model': 'sol', 'tokens': 50}])
         def fail(*args): raise UpstreamError(503)
         self.a.transport=fail
         self.assertEqual(self.a.upload_pending(manual=True),'failed')
         self.assertEqual(self.a.status()['pending_tokens']['value'],50)
         loaded=Adapter(self.config,self.temp.name,transport=lambda *args:{'ok':True})
         self.assertEqual(loaded.status()['pending_tokens']['value'],50)
+        self.assertEqual(loaded.status()['pending_tokens']['models'], [{'model': 'sol', 'tokens': 50}])
         self.assertEqual(loaded.status()['next_upload_at'],self.a.status()['next_upload_at'])
         loaded.upload_retry_at=0;loaded.upload_pending(manual=True)
         loaded.ingest(snapshot(160))
         self.assertEqual(loaded.status()['pending_tokens']['value'],10)
+
+    def test_model_deltas_new_models_zero_and_restart(self):
+        def snapshot(models):
+            return {'deviceId': 'Synthetic Desktop', 'trackedClients': ['synthetic-client'],
+                    'periods': {'allTime': {'totalTokens': sum(models.values()), 'models': models}}}
+        self.a.ingest(snapshot({'sol': 100, 'luna': 20}))
+        self.a.upload_pending(manual=True)
+        self.a.ingest(snapshot({'sol': 130, 'luna': 20, 'new-model': 50}))
+        loaded = Adapter(self.config, self.temp.name, transport=lambda *args: {'ok': True})
+        summary = loaded.status()['pending_tokens']
+        self.assertEqual(summary['value'], 80)
+        self.assertEqual(summary['models'], [{'model': 'new-model', 'tokens': 50}, {'model': 'sol', 'tokens': 30}])
+        self.assertEqual(summary['models_reason'], 'snapshot_difference')
+        loaded.upload_pending(manual=True)
+        loaded.ingest(snapshot({'sol': 130, 'luna': 20, 'new-model': 50}))
+        self.assertEqual(loaded.status()['pending_tokens']['models'], [])
+        self.assertEqual(loaded.status()['pending_tokens']['models_reason'], 'snapshot_difference')
+
+    def test_model_missing_baseline_incomplete_and_reassigned_counters(self):
+        def snapshot(total, models=None):
+            period = {'totalTokens': total}
+            if models is not None: period['models'] = models
+            return {'deviceId': 'Synthetic Desktop', 'trackedClients': ['synthetic-client'], 'allTime': period}
+        self.a.ingest(snapshot(100))
+        self.a.upload_pending(manual=True)
+        self.a.ingest(snapshot(130, {'sol': 130}))
+        self.assertEqual(self.a.status()['pending_tokens']['models_reason'], 'missing_model_baseline')
+        self.a.upload_pending(manual=True)
+        for models in ({'sol': 120}, {'sol': True}, {'sol': -1}, {'sol': '150'}):
+            self.a.ingest(snapshot(150, models))
+            summary = self.a.status()['pending_tokens']
+            self.assertEqual(summary['value'], 20)
+            self.assertEqual(summary['models_reason'], 'missing_model_fields')
+            self.assertEqual(summary['models'], [])
+        self.a.ingest(snapshot(150, {'sol': 120, 'luna': 30}))
+        summary = self.a.status()['pending_tokens']
+        self.assertEqual(summary['value'], 20)
+        self.assertEqual(summary['models_reason'], 'model_counter_decreased')
+        self.assertEqual(summary['models'], [])
+        self.a.upload_pending(manual=True)
+        self.a.ingest(snapshot(160, {'sol': 125, 'luna': 35}))
+        self.assertEqual(sum(r['tokens'] for r in self.a.status()['pending_tokens']['models']), 10)
 
     def test_health_normal_queue_and_actual_failures(self):
         self.a.refresh()
