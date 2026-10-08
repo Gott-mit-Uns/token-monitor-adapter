@@ -3,7 +3,7 @@ import threading
 import unittest
 from pathlib import Path
 from unittest.mock import Mock
-from desktop_settings import SettingsController
+from desktop_settings import SettingsController, overview_window_bounds
 
 
 class PendingMigrationRequired(ValueError): pass
@@ -13,6 +13,25 @@ class Clock:
     def __init__(self): self.now = 0
     def monotonic(self): return self.now
     def sleep(self, seconds): self.now += seconds
+
+
+class WindowBoundsTests(unittest.TestCase):
+    def test_full_overview_on_tall_monitor(self):
+        self.assertEqual(overview_window_bounds((0,0,1920,1400)),(740,180,440,1040))
+
+    def test_1080_work_area_excludes_taskbar(self):
+        x,y,width,height=overview_window_bounds((0,0,1920,1040))
+        self.assertEqual((width,height),(440,1024))
+        self.assertGreaterEqual(y,0)
+        self.assertLessEqual(y+height,1040)
+
+    def test_high_dpi_and_short_screen_stay_inside_work_area(self):
+        for scale in (1,1.25,1.5,2):
+            for area in ((0,0,1366,728),(-1920,32,1920,1008),(0,0,320,480)):
+                x,y,w,h=overview_window_bounds(area,scale)
+                self.assertGreater(w,0);self.assertGreater(h,0)
+                self.assertGreaterEqual(x,area[0]);self.assertGreaterEqual(y,area[1])
+                self.assertLessEqual(x+w,area[0]+area[2]);self.assertLessEqual(y+h,area[1]+area[3])
 
 
 class ControllerTests(unittest.TestCase):

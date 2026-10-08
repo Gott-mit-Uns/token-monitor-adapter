@@ -2,6 +2,16 @@
 import time
 
 
+def overview_window_bounds(work_area, scale=1.0):
+    """Fit the preferred overview window within a monitor's physical work area."""
+    x, y, available_width, available_height = work_area
+    margin = round(8 * scale)
+    width = min(round(440 * scale), max(1, available_width - 2 * margin))
+    height = min(round(1040 * scale), max(1, available_height - 2 * margin))
+    return (x + (available_width - width) // 2,
+            y + (available_height - height) // 2, width, height)
+
+
 class SettingsController:
     def __init__(self, host, settings, version, executable, frozen, stop, probe, clock=None):
         self.host, self.settings = host, settings

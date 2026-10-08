@@ -15,9 +15,9 @@ import time
 import urllib.request
 from adapter import Adapter,Server,Handler,atomic_json,StorageError
 import settings
-from desktop_settings import SettingsController
+from desktop_settings import SettingsController, overview_window_bounds
 
-VERSION='0.1.18'
+VERSION='0.1.19'
 K=C.WinDLL('kernel32',use_last_error=True)
 K.CreateEventW.argtypes=[W.LPVOID,W.BOOL,W.BOOL,W.LPCWSTR]; K.CreateEventW.restype=W.HANDLE
 K.CreateMutexW.argtypes=[W.LPVOID,W.BOOL,W.LPCWSTR]; K.CreateMutexW.restype=W.HANDLE
@@ -212,7 +212,21 @@ def ui_main(root,pipe,parent):
         def save_settings(self,value): return local_ipc.call(pipe,parent,'save_settings',value)
         def exit_app(self): return local_ipc.call(pipe,parent,'exit_app')
     cfg=settings.load(root)
-    window=webview.create_window('Token Monitor Adapter','http://127.0.0.1:'+str(cfg['port'])+'/adapter',js_api=UiBridge(),width=560,height=680,min_size=(440,520))
+    window=webview.create_window('Token Monitor Adapter','http://127.0.0.1:'+str(cfg['port'])+'/adapter',js_api=UiBridge(),width=440,height=1040,min_size=(390,520))
+    def fit_overview():
+        # before_show runs on the WinForms thread after the native handle exists.
+        # Use the actual monitor work area and window DPI, not the screen bounds.
+        from System.Drawing import Point, Size
+        from System.Windows.Forms import Screen, FormStartPosition
+        native=window.native
+        area=Screen.FromControl(native).WorkingArea
+        scale=(C.windll.user32.GetDpiForWindow(native.Handle.ToInt32()) or 96) / 96.0
+        x,y,width,height=overview_window_bounds((area.X,area.Y,area.Width,area.Height),scale)
+        native.MinimumSize=Size(min(round(390*scale),width),min(round(520*scale),height))
+        native.Size=Size(width,height)
+        native.StartPosition=FormStartPosition.Manual
+        native.Location=Point(x,y)
+    window.events.before_show+=fit_overview
     stop=event(root,'ui-stop',True);show=event(root,'ui-show');force=threading.Event();closed=threading.Event()
     close_requested=threading.Event()
     def closing():
