@@ -17,7 +17,7 @@ from adapter import Adapter,Server,Handler,atomic_json,StorageError
 import settings
 from desktop_settings import SettingsController, overview_window_bounds
 
-VERSION='0.1.20'
+VERSION='0.1.21'
 K=C.WinDLL('kernel32',use_last_error=True)
 K.CreateEventW.argtypes=[W.LPVOID,W.BOOL,W.BOOL,W.LPCWSTR]; K.CreateEventW.restype=W.HANDLE
 K.CreateMutexW.argtypes=[W.LPVOID,W.BOOL,W.LPCWSTR]; K.CreateMutexW.restype=W.HANDLE
@@ -248,7 +248,9 @@ def ui_main(root,pipe,parent):
                     area=Screen.FromControl(native).WorkingArea
                     scale=(C.windll.user32.GetDpiForWindow(native.Handle.ToInt32()) or 96)/96.0
                     frame=(native.Height-native.ClientSize.Height)/scale
-                    height=max(520,min(4096,float(layout['height'])+frame))
+                    # Reserve room for a model row even when the first status
+                    # has just uploaded and a new local snapshot arrives next.
+                    height=max(1140,min(4096,float(layout['height'])+frame))
                     x,y,width,height=overview_window_bounds((area.X,area.Y,area.Width,area.Height),scale,height)
                     window.resize(round(width/scale),round(height/scale))
                     window.move(round(x/scale),round(y/scale))
