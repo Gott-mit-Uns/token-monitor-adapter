@@ -69,7 +69,7 @@ def validate(value):
     theme=value.get('theme','system')
     if theme not in ('system','light','dark'): raise ValueError('主题无效。')
     style=value.get('ui_style','glass')
-    if style not in ('glass','clean','instrument'): raise ValueError('界面风格无效。')
+    if style not in ('glass','clean','instrument','paper','midnight'): raise ValueError('界面风格无效。')
     return {'upstream':value['upstream'].strip().rstrip('/'),'interval_seconds':download,'upload_interval_ms':upload,'theme':theme,'ui_style':style}
 
 class PendingMigrationRequired(ValueError):

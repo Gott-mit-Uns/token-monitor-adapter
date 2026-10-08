@@ -32,11 +32,11 @@ class SettingsTests(unittest.TestCase):
     def test_old_config_defaults_to_glass(self):
         self.assertEqual(settings.load(self.root)['ui_style'],'glass')
     def test_all_styles_persist_and_legacy_save_preserves_style(self):
-        for style in ('glass','clean','instrument'):
+        for style in ('glass','clean','instrument','paper','midnight'):
             settings.save(self.root,{**self.value,'ui_style':style},'synthetic-secret')
             self.assertEqual(settings.load(self.root)['ui_style'],style)
         settings.save(self.root,self.value,'synthetic-secret')
-        self.assertEqual(settings.load(self.root)['ui_style'],'instrument')
+        self.assertEqual(settings.load(self.root)['ui_style'],'midnight')
     def test_invalid_style_rejected_before_save(self):
         with self.assertRaises(ValueError):
             settings.save(self.root,{**self.value,'ui_style':'unknown'},'synthetic-secret')

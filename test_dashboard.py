@@ -17,7 +17,7 @@ if not NODE:
 
 class DashboardTests(unittest.TestCase):
     def test_style_options_keep_existing_navigation_and_use_local_fonts(self):
-        for style in ('glass','clean','instrument'):
+        for style in ('glass','clean','instrument','paper','midnight'):
             self.assertIn('value="'+style+'"',HTML)
         self.assertIn("ui_style:$('uiStyle').value",HTML)
         self.assertIn("applyStyle(c.ui_style||'glass')",HTML)
@@ -25,6 +25,21 @@ class DashboardTests(unittest.TestCase):
         self.assertNotIn('fonts.googleapis',HTML)
         self.assertIn('font-variant-numeric:tabular-nums',HTML)
         self.assertIn("localStorage.setItem('adapter-ui-style',style)",HTML)
+        self.assertIn("localStorage.setItem('adapter-theme',value)",HTML)
+        self.assertIn('applyTheme(initialTheme)',HTML)
+    def test_every_style_declares_palette_option_and_hint_without_hardcoded_accents(self):
+        select=HTML.split('<select id="uiStyle">')[1].split('</select>')[0]
+        styles=re.findall(r'<option value="(\w+)">',select)
+        self.assertEqual(styles, ['glass','clean','instrument','paper','midnight'])
+        descriptions=HTML.split('const styleDescriptions={')[1].split('};')[0]
+        # glass keeps the base :root palette; every other style declares its own block and hint.
+        self.assertIn(':root{--bg:#f5f5f7',HTML)
+        self.assertIn('glass:',descriptions)
+        for style in styles[1:]:
+            self.assertIn(':root[data-style='+style+']{',HTML)
+            self.assertIn(style+':',descriptions)
+        self.assertNotIn('background:#286ac5',HTML)
+        self.assertNotIn('color:#bf7a00',HTML)
     def calculate(self, expression):
         if not NODE:
             self.skipTest('Node.js is needed to validate dashboard calculations')
