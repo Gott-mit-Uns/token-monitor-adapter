@@ -1,5 +1,15 @@
 # Token Monitor 上游兼容检查
 
+## v0.68.0 / Adapter 0.1.18 及后续源码
+
+检查官方 `v0.68.0`（提交 `5d2db368d8313415763860d594de00e46a663418`）。相比 v0.67.0，`src/hub/server.js` 与 `src/shared/syncContent.js` 没有变化；`buildSyncPayload` 新增删除本地 `codexLocalSessionKeys`，不将本地采集索引发送给 Hub。实验性 Codex Dots 的采集属于原客户端，Adapter 继续转发客户端生成的普通累计用量，不增加采集器或远端 SSE。
+
+使用官方 0.68 Node Hub 与合成快照完成隔离验证：基础用量上报、health/stats 下载、共享设置及 409 冲突、标题权限启用和撤销、累计修正与重启基线均通过。确认上游剔除本地 Codex 会话索引；连续本地提交不提前上传，重复缓存读取不增加远端请求。永久回归覆盖 Codex 累计增量、定时上传和待上报重启恢复。
+
+结论：未发现 0.68 需要修改 Adapter 运行协议的问题。现有 0.1.18 已具备这些基础及额外同步接口，升级 Token Monitor 不要求同时升级 Adapter。下载和上报仍由 Adapter 周期控制。
+
+限制：官方 Node Hub 的合成验证不等同于完整 Electron 客户端、Cloudflare Worker 或 Codex Dots 真实采集端到端验证。验证记录只保留本机，不纳入发布包。
+
 ## v0.67.0 / Adapter 0.1.12
 
 检查范围是基础用量同步与省流量，不包含新增“额外同步”。没有改动本机 EXE、连接配置或周期，也没有启用标题共享。

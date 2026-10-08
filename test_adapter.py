@@ -96,6 +96,28 @@ class Tests(unittest.TestCase):
         self.assertEqual(self.calls[0][2]['allTime']['totalTokens'], 1019)
         self.assertIsNone(self.a.pending)
 
+    def test_v068_codex_usage_remains_scheduled_and_persistent(self):
+        # v0.68 includes optional local Codex usage in ordinary cumulative
+        # totals; buildSyncPayload removes the private local session ledger.
+        payload = {'deviceId': 'Synthetic Desktop', 'trackedClients': ['codex'],
+                   'allTime': {'totalTokens': 1000}}
+        self.a.ingest(payload)
+        self.assertEqual(self.a.upload_pending(manual=True), 'success')
+        self.calls.clear()
+        for total in (1010, 1020, 1040):
+            payload['allTime']['totalTokens'] = total
+            self.a.ingest(payload)
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.a.upload_pending(), 'waiting')
+        restored = Adapter(self.config, self.temp.name, transport=self.remote,
+                           secret_provider=lambda: 'synthetic-test-secret')
+        self.assertEqual(restored.pending_token_summary()['value'], 40)
+        restored.metrics['upload_schedule']['next_at'] = time.time() - 1
+        self.assertEqual(restored.upload_pending(), 'success')
+        self.assertEqual(self.calls[0][2]['trackedClients'], ['codex'])
+        self.assertEqual(self.calls[0][2]['allTime']['totalTokens'], 1040)
+        self.assertIsNone(restored.pending)
+
     def test_v067_counter_correction_establishes_new_baseline(self):
         payload = {'deviceId': 'Synthetic Desktop', 'trackedClients': ['claude-code'],
                    'periods': {'allTime': {'totalTokens': 1000}}}
